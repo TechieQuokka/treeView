@@ -107,6 +107,11 @@ void Insert_ChildNode_N_Tree (struct N_TreeType* tree, struct TreeNodeType* pare
       position, tree->ChildSize - 1);
     return;
   }
+  if (parent->Children[position] != NULL) {
+
+    printf("Error! Position %d is already occupied. Insert_ChildNode_N_Tree()\n", position);
+    return;
+  }
 
   struct TreeNodeType* newNode = MakeTreeNode(parent, data, tree->ChildSize);
   if (newNode == NULL) return;

@@ -3,7 +3,10 @@
     "allow": [
       "Bash(dir /b:*)",
       "Bash(gh repo create:*)",
-      "Bash(git add:*)"
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(git push:*)",
+      "Bash(gcc:*)"
     ],
     "deny": [],
     "ask": []

@@ -280,3 +280,50 @@ struct TreeNodeType* GetParentNode (struct TreeNodeType* current) {
 
   return current->Parent;
 }
+
+void MoveChildNode (struct TreeNodeType* parent, int from, int to) {
+
+  if (parent == NULL) return;
+  if (parent->Children == NULL) return;
+
+  // 범위 체크는 호출하는 쪽에서 해야 함
+  struct TreeNodeType* temp = parent->Children[from];
+
+  // from에서 to로 이동 (사이의 노드들을 shift)
+  if (from < to) {
+    // 왼쪽에서 오른쪽으로 이동
+    for (int i = from; i < to; i++) {
+      parent->Children[i] = parent->Children[i + 1];
+    }
+  } else if (from > to) {
+    // 오른쪽에서 왼쪽으로 이동
+    for (int i = from; i > to; i--) {
+      parent->Children[i] = parent->Children[i - 1];
+    }
+  } else {
+    // from == to, 이동 필요 없음
+    return;
+  }
+
+  parent->Children[to] = temp;
+}
+
+void SwapChildNode (struct TreeNodeType* parent, int from, int to) {
+
+  if (parent == NULL) return;
+  if (parent->Children == NULL) return;
+
+  // 범위 체크는 호출하는 쪽에서 해야 함
+  struct TreeNodeType* temp = parent->Children[from];
+  parent->Children[from] = parent->Children[to];
+  parent->Children[to] = temp;
+}
+
+void Edit (struct TreeNodeType* current, char* data) {
+
+  if (current == NULL) return;
+  if (data == NULL) return;
+
+  strncpy (current->Data, data, SIZE - 1);
+  current->Data[SIZE - 1] = '\0';
+}
