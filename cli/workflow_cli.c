@@ -62,7 +62,24 @@ void UpdatePath(WorkflowCLI* cli) {
 
   // 임시 배열에 역순으로 저장
   char tempPath[MAX_PATH_DEPTH][SIZE];
+
+  // 무한 루프 방지: 이미 방문한 노드를 추적
+  struct TreeNodeType* visited[MAX_PATH_DEPTH] = {NULL};
+
   while (node != NULL && depth < MAX_PATH_DEPTH) {
+    // 순환 참조 검사
+    for (int i = 0; i < depth; i++) {
+      if (visited[i] == node) {
+        printf("Warning! Circular reference detected in tree path.\n");
+        cli->pathDepth = depth;
+        for (int j = 0; j < depth; j++) {
+          strncpy(cli->path[j], tempPath[depth - 1 - j], SIZE);
+        }
+        return;
+      }
+    }
+
+    visited[depth] = node;
     strncpy(tempPath[depth], node->Data, SIZE - 1);
     tempPath[depth][SIZE - 1] = '\0';
     depth++;
@@ -132,6 +149,23 @@ void ShowCurrentNode(WorkflowCLI* cli) {
   printf("Children Count: %d\n", childCount);
 }
 
+static int FindMaxDataLength(struct TreeNodeType* node, int childSize) {
+  if (node == NULL) return 0;
+
+  int maxLen = strlen(node->Data);
+
+  for (int i = 0; i < childSize; i++) {
+    if (node->Children[i] != NULL) {
+      int childMax = FindMaxDataLength(node->Children[i], childSize);
+      if (childMax > maxLen) {
+        maxLen = childMax;
+      }
+    }
+  }
+
+  return maxLen;
+}
+
 void ShowFullTree(WorkflowCLI* cli) {
   printf("\n");
   Show(cli->tree);
@@ -198,7 +232,13 @@ void ChangeDirectory(WorkflowCLI* cli, const char* target) {
 
 void InsertNode(WorkflowCLI* cli, const char* data, int position) {
   if (position < 0 || position >= cli->tree->ChildSize) {
-    printf("Error! Position must be between 0 and %d\n", cli->tree->ChildSize - 1);
+    printf("Error! Position %d exceeds array bounds (0-%d)\n", position, cli->tree->ChildSize - 1);
+    return;
+  }
+
+  // 해당 위치가 비어있는지 확인하고, 비어있으면 삽입
+  if (cli->current->Children[position] != NULL) {
+    printf("Warning! Position %d is already occupied. Skipping insertion.\n", position);
     return;
   }
 
@@ -224,7 +264,27 @@ void InsertParent(WorkflowCLI* cli, const char* data) {
 
 void RemoveNode(WorkflowCLI* cli, bool clearAll) {
   if (cli->current == cli->tree->Head) {
-    printf("Error! Cannot remove root node.\n");
+    if (clearAll) {
+      // Remove all children of the root node
+      int removedCount = 0;
+      for (int i = 0; i < cli->tree->ChildSize; i++) {
+        if (cli->current->Children[i] != NULL) {
+          Clear_N_Tree(cli->tree, cli->current->Children[i]);
+          cli->current->Children[i] = NULL;
+          removedCount++;
+        }
+      }
+      if (removedCount > 0) {
+        printf("Removed all %d children of root node.\n", removedCount);
+        UpdatePath(cli);
+        AutoSave(cli);
+      } else {
+        printf("Root node has no children to remove.\n");
+      }
+    } else {
+      printf("Error! Cannot remove root node.\n");
+      printf("Use 'remove all' to remove all children of root.\n");
+    }
     return;
   }
 
@@ -258,6 +318,20 @@ void EditCurrentNode(WorkflowCLI* cli, const char* newData) {
 }
 
 // JSON 저장 관련 함수들
+static void WriteEscapedString(FILE* fp, const char* str) {
+  // 큰따옴표를 이스케이프 처리하여 출력
+  while (*str) {
+    if (*str == '"') {
+      fprintf(fp, "\\\"");
+    } else if (*str == '\\') {
+      fprintf(fp, "\\\\");
+    } else {
+      fputc(*str, fp);
+    }
+    str++;
+  }
+}
+
 static void WriteNodeToJSON(FILE* fp, struct TreeNodeType* node, int childSize, int depth) {
   if (node == NULL) {
     fprintf(fp, "null");
@@ -271,7 +345,9 @@ static void WriteNodeToJSON(FILE* fp, struct TreeNodeType* node, int childSize, 
   }
 
   fprintf(fp, "{\n");
-  fprintf(fp, "%s  \"data\": \"%s\"", indent, node->Data);
+  fprintf(fp, "%s  \"data\": \"", indent);
+  WriteEscapedString(fp, node->Data);
+  fprintf(fp, "\"");
 
   // 자식 노드들 확인
   int hasChildren = 0;
@@ -365,7 +441,13 @@ static char* ParseString(char* str, char* output, int maxLen) {
 
   int i = 0;
   while (*str && *str != '"' && i < maxLen - 1) {
-    output[i++] = *str++;
+    // 이스케이프된 따옴표 처리
+    if (*str == '\\' && *(str + 1) == '"') {
+      output[i++] = '"';
+      str += 2;
+    } else {
+      output[i++] = *str++;
+    }
   }
   output[i] = '\0';
 
@@ -383,12 +465,18 @@ static char* ParseNumber(char* str, int* value) {
   return str;
 }
 
-static char* ParseNode(char* str, struct TreeNodeType** node, int childSize);
+static char* ParseNode(char* str, struct TreeNodeType** node, int childSize, int depth);
 
-static char* ParseChildren(char* str, struct TreeNodeType* parent, int childSize) {
+static char* ParseChildren(char* str, struct TreeNodeType* parent, int childSize, int depth) {
   str = SkipWhitespace(str);
   if (*str != '[') return NULL;
   str++;
+
+  // 최대 깊이 제한 (무한 재귀 방지)
+  if (depth > MAX_PARSE_DEPTH) {
+    printf("Error! Maximum parsing depth exceeded.\n");
+    return NULL;
+  }
 
   for (int i = 0; i < childSize; i++) {
     str = SkipWhitespace(str);
@@ -398,7 +486,7 @@ static char* ParseChildren(char* str, struct TreeNodeType* parent, int childSize
       parent->Children[i] = NULL;
       str += 4;
     } else {
-      str = ParseNode(str, &parent->Children[i], childSize);
+      str = ParseNode(str, &parent->Children[i], childSize, depth + 1);
       if (parent->Children[i] != NULL) {
         parent->Children[i]->Parent = parent;
       }
@@ -414,7 +502,7 @@ static char* ParseChildren(char* str, struct TreeNodeType* parent, int childSize
   return str;
 }
 
-static char* ParseNode(char* str, struct TreeNodeType** node, int childSize) {
+static char* ParseNode(char* str, struct TreeNodeType** node, int childSize, int depth) {
   str = SkipWhitespace(str);
 
   if (strncmp(str, "null", 4) == 0) {
@@ -425,18 +513,29 @@ static char* ParseNode(char* str, struct TreeNodeType** node, int childSize) {
   if (*str != '{') return NULL;
   str++;
 
+  // 최대 깊이 제한 (무한 재귀 방지)
+  if (depth > MAX_PARSE_DEPTH) {
+    printf("Error! Maximum parsing depth exceeded.\n");
+    *node = NULL;
+    return NULL;
+  }
+
   *node = (struct TreeNodeType*)malloc(sizeof(struct TreeNodeType));
   if (*node == NULL) return NULL;
 
   (*node)->Parent = NULL;
   (*node)->Children = (struct TreeNodeType**)calloc(childSize, sizeof(struct TreeNodeType*));
+  memset((*node)->Data, 0, SIZE);  // 데이터 초기화
 
+  int iterations = 0;
   while (*str && *str != '}') {
     str = SkipWhitespace(str);
 
     if (*str == '"') {
       char key[64];
       str = ParseString(str, key, sizeof(key));
+      if (str == NULL) break;  // 파싱 실패 시 중단
+
       str = SkipWhitespace(str);
 
       if (*str == ':') str++;
@@ -444,8 +543,10 @@ static char* ParseNode(char* str, struct TreeNodeType** node, int childSize) {
 
       if (strcmp(key, "data") == 0) {
         str = ParseString(str, (*node)->Data, SIZE);
+        if (str == NULL) break;  // 파싱 실패 시 중단
       } else if (strcmp(key, "children") == 0) {
-        str = ParseChildren(str, *node, childSize);
+        str = ParseChildren(str, *node, childSize, depth);
+        if (str == NULL) break;  // 파싱 실패 시 중단
       }
     }
 
@@ -506,7 +607,7 @@ bool LoadTreeFromJSON(WorkflowCLI* cli) {
       } else if (strcmp(key, "count") == 0) {
         str = ParseNumber(str, &count);
       } else if (strcmp(key, "tree") == 0) {
-        str = ParseNode(str, &root, childSize);
+        str = ParseNode(str, &root, childSize, 0);
       }
     }
 
@@ -538,6 +639,81 @@ bool LoadTreeFromJSON(WorkflowCLI* cli) {
   return false;
 }
 
+// 큰따옴표를 고려한 명령어 파싱 함수
+static int ParseCommand(const char* command, char* cmd, char* arg1, char* arg2) {
+  const char* p = command;
+  int argCount = 0;
+  int maxLen = MAX_COMMAND_LEN - 1;  // 버퍼 크기 제한
+
+  // 공백 건너뛰기
+  while (*p && (*p == ' ' || *p == '\t')) p++;
+
+  // 1. 명령어 파싱
+  int i = 0;
+  while (*p && *p != ' ' && *p != '\t' && i < SIZE - 1) {
+    cmd[i++] = *p++;
+  }
+  cmd[i] = '\0';
+  if (i > 0) argCount++;
+
+  // 공백 건너뛰기
+  while (*p && (*p == ' ' || *p == '\t')) p++;
+  if (!*p) return argCount;
+
+  // 2. 첫 번째 인자 파싱
+  i = 0;
+  if (*p == '"') {
+    // 큰따옴표로 시작하는 경우
+    p++; // 시작 따옴표 건너뛰기
+    while (*p && *p != '"' && i < maxLen) {
+      arg1[i++] = *p++;
+    }
+    if (*p == '"') p++; // 종료 따옴표 건너뛰기
+  } else {
+    // 일반 토큰
+    while (*p && *p != ' ' && *p != '\t' && i < maxLen) {
+      arg1[i++] = *p++;
+    }
+  }
+  arg1[i] = '\0';
+  if (i > 0) argCount++;
+
+  // 공백 건너뛰기
+  while (*p && (*p == ' ' || *p == '\t')) p++;
+  if (!*p) return argCount;
+
+  // 3. 두 번째 인자 파싱
+  i = 0;
+  if (*p == '"') {
+    // 큰따옴표로 시작하는 경우
+    p++; // 시작 따옴표 건너뛰기
+    while (*p && *p != '"' && i < maxLen) {
+      arg2[i++] = *p++;
+    }
+    if (*p == '"') p++; // 종료 따옴표 건너뛰기
+  } else {
+    // 나머지 전부 (공백 포함)
+    while (*p && i < maxLen) {
+      arg2[i++] = *p++;
+    }
+  }
+  arg2[i] = '\0';
+  if (i > 0) argCount++;
+
+  return argCount;
+}
+
+// 문자열 길이 검증 함수
+static bool ValidateStringLength(const char* str, const char* fieldName) {
+  size_t len = strlen(str);
+  if (len >= SIZE) {
+    printf("Error! %s is too long (max %d characters, got %zu).\n",
+           fieldName, SIZE - 1, len);
+    return false;
+  }
+  return true;
+}
+
 void RunWorkflowCLI(WorkflowCLI* cli) {
   if (cli == NULL) {
     printf("Error! CLI not initialized.\n");
@@ -545,8 +721,8 @@ void RunWorkflowCLI(WorkflowCLI* cli) {
   }
 
   char command[MAX_COMMAND_LEN];
-  char arg1[SIZE];
-  char arg2[SIZE];
+  char arg1[MAX_COMMAND_LEN];  // 임시 버퍼는 크게
+  char arg2[MAX_COMMAND_LEN];  // 임시 버퍼는 크게
 
   printf("\n========== Workflow Tree CLI ==========\n");
   printf("Type 'help' for available commands.\n");
@@ -573,7 +749,11 @@ void RunWorkflowCLI(WorkflowCLI* cli) {
     arg1[0] = '\0';
     arg2[0] = '\0';
 
-    int parsed = sscanf(command, "%s %s %[^\n]", cmd, arg1, arg2);
+    int parsed = ParseCommand(command, cmd, arg1, arg2);
+
+    // 디버깅 출력
+    printf("[DEBUG] parsed=%d, cmd='%s', arg1='%s', arg2='%s'\n",
+           parsed, cmd, arg1, arg2);
 
     // 명령어 처리
     if (strcmp(cmd, "exit") == 0 || strcmp(cmd, "quit") == 0) {
@@ -596,8 +776,10 @@ void RunWorkflowCLI(WorkflowCLI* cli) {
       ShowFullTree(cli);
     }
     else if (strcmp(cmd, "view") == 0) {
+      int maxLen = FindMaxDataLength(cli->tree->Head, cli->tree->ChildSize);
+      int width = maxLen + 1; // 여백을 위해 1 추가
       printf("\n");
-      TreeView(cli->tree, 8);
+      TreeView(cli->tree, width);
       printf("\n");
     }
     else if (strcmp(cmd, "info") == 0) {
@@ -613,7 +795,11 @@ void RunWorkflowCLI(WorkflowCLI* cli) {
     else if (strcmp(cmd, "insert") == 0) {
       if (parsed < 3) {
         printf("Usage: insert <position> <data>\n");
+        printf("  Or: insert <position> \"data with spaces\"\n");
       } else {
+        if (!ValidateStringLength(arg2, "Data")) {
+          continue;
+        }
         int pos = atoi(arg1);
         InsertNode(cli, arg2, pos);
       }
@@ -621,7 +807,11 @@ void RunWorkflowCLI(WorkflowCLI* cli) {
     else if (strcmp(cmd, "insertp") == 0) {
       if (parsed < 2) {
         printf("Usage: insertp <data>\n");
+        printf("  Or: insertp \"data with spaces\"\n");
       } else {
+        if (!ValidateStringLength(arg1, "Data")) {
+          continue;
+        }
         InsertParent(cli, arg1);
       }
     }
@@ -635,7 +825,11 @@ void RunWorkflowCLI(WorkflowCLI* cli) {
     else if (strcmp(cmd, "edit") == 0) {
       if (parsed < 2) {
         printf("Usage: edit <new_data>\n");
+        printf("  Or: edit \"new data with spaces\"\n");
       } else {
+        if (!ValidateStringLength(arg1, "Data")) {
+          continue;
+        }
         EditCurrentNode(cli, arg1);
       }
     }

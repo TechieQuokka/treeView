@@ -3,7 +3,8 @@
 
 #include <stdbool.h>
 
-#define SIZE 16
+#define CHILD_SIZE 128
+#define SIZE 32
 
 struct TreeNodeType {
 

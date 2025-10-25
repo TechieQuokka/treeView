@@ -3,9 +3,11 @@
 
 #include "../lib/n_tree.h"
 
-#define MAX_PATH_DEPTH 64
+#define MAX_PATH_DEPTH 1024
 #define MAX_COMMAND_LEN 256
 #define JSON_FILE_PATH "workflow_tree.json"
+#define MAX_PARSE_DEPTH 100
+#define MAX_PARSE_ITERATIONS 1000
 
 // CLI 상태를 관리하는 구조체
 typedef struct {

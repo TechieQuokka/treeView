@@ -4,8 +4,6 @@
 #include <string.h>
 #include <stdio.h>
 
-#define CHILD_SIZE 128
-
 struct ChildPositionsType {
 
   int positions[CHILD_SIZE];

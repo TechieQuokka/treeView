@@ -3,8 +3,8 @@
 
 int main (int argc, char* argv[]) {
 
-  // CLI 초기화 (각 노드는 최대 4개의 자식을 가질 수 있음)
-  WorkflowCLI* cli = InitWorkflowCLI(4);
+  // CLI 초기화 (각 노드는 최대 128개의 자식을 가질 수 있음)
+  WorkflowCLI* cli = InitWorkflowCLI(128); // max
   if (cli == NULL) {
     printf("Failed to initialize CLI.\n");
     return 1;
