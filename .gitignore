@@ -1,0 +1,17 @@
+# Compiled files
+*.exe
+*.o
+*.obj
+
+# IDE/Editor files
+.vscode/
+.vs/
+*.suo
+*.user
+
+# Library files (optional - uncomment if you want to include lib folder)
+# lib/
+
+# OS files
+.DS_Store
+Thumbs.db
